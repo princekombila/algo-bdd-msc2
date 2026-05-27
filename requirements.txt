@@ -1,0 +1,8 @@
+mysql-connector-python>=8.0
+pandas>=2.0
+numpy>=1.24
+python-dotenv>=1.0
+sqlalchemy>=2.0
+requests>=2.31
+dash>=2.14
+plotly>=5.18
