@@ -14,6 +14,7 @@ from pathlib import Path
 import dash
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 from dash import Input, Output, dcc, html
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
@@ -76,6 +77,11 @@ app = dash.Dash(__name__)
 app.title = "Dashboard Marketing RFM"
 
 segments = sorted(DATA["segment"].dropna().unique().tolist()) if not DATA.empty else []
+if not DATA.empty:
+    RECENCY_MIN = int(DATA["recency"].min())
+    RECENCY_MAX = int(DATA["recency"].max())
+else:
+    RECENCY_MIN, RECENCY_MAX = 0, 365
 
 app.layout = html.Div(
     style={"fontFamily": "Arial, sans-serif", "padding": "20px"},
@@ -97,9 +103,25 @@ app.layout = html.Div(
                 ),
             ],
         ),
+        html.Div(
+            style={"maxWidth": "600px", "marginBottom": "30px"},
+            children=[
+                html.Label("Filtrer par recence (jours) :"),
+                dcc.RangeSlider(
+                    id="recency-filter",
+                    min=RECENCY_MIN,
+                    max=RECENCY_MAX,
+                    value=[RECENCY_MIN, RECENCY_MAX],
+                    step=1,
+                    marks=None,
+                    tooltip={"placement": "bottom", "always_visible": True},
+                ),
+            ],
+        ),
         dcc.Graph(id="rfm-scatter"),
         dcc.Graph(id="segment-bar"),
         dcc.Graph(id="monetary-hist"),
+        dcc.Graph(id="rfm-heatmap"),
     ],
 )
 
@@ -108,16 +130,21 @@ app.layout = html.Div(
     Output("rfm-scatter", "figure"),
     Output("segment-bar", "figure"),
     Output("monetary-hist", "figure"),
+    Output("rfm-heatmap", "figure"),
     Input("segment-filter", "value"),
+    Input("recency-filter", "value"),
 )
-def update_charts(selected_segments):
+def update_charts(selected_segments, recency_range):
     df = DATA.copy()
     if selected_segments:
         df = df[df["segment"].isin(selected_segments)]
+    if recency_range and len(recency_range) == 2:
+        r_min, r_max = recency_range
+        df = df[(df["recency"] >= r_min) & (df["recency"] <= r_max)]
 
     if df.empty:
-        empty = px.scatter(title="Aucune donnee a afficher")
-        return empty, empty, empty
+        empty = px.scatter(title="Aucune donnee a afficher", template="plotly_dark")
+        return empty, empty, empty, empty
 
     fig_scatter = px.scatter(
         df,
@@ -127,6 +154,7 @@ def update_charts(selected_segments):
         size="frequency",
         hover_data=["client_id", "rfm_score"],
         title="Recence vs Montant (taille = frequence)",
+        template="plotly_dark",
     )
 
     seg_counts = (
@@ -138,6 +166,7 @@ def update_charts(selected_segments):
         y="clients",
         color="segment",
         title="Nombre de clients par segment",
+        template="plotly_dark",
     )
 
     fig_hist = px.histogram(
@@ -146,9 +175,35 @@ def update_charts(selected_segments):
         color="segment",
         nbins=30,
         title="Distribution du chiffre d'affaires par client",
+        template="plotly_dark",
     )
 
-    return fig_scatter, fig_bar, fig_hist
+    pivot = (
+        df.pivot_table(index="R", columns="F", values="M", aggfunc="mean")
+        .reindex(index=[1, 2, 3, 4, 5], columns=[1, 2, 3, 4, 5])
+    )
+    fig_heatmap = go.Figure(
+        data=go.Heatmap(
+            z=pivot.values,
+            x=pivot.columns,
+            y=pivot.index,
+            colorscale="RdYlGn",
+            zmin=1,
+            zmax=5,
+            colorbar=dict(title="Score M moyen"),
+            hovertemplate="R=%{y}<br>F=%{x}<br>M moyen=%{z:.2f}<extra></extra>",
+        )
+    )
+    fig_heatmap.update_layout(
+        title="Heatmap RFM - Intensite Monetary par Score R x F",
+        xaxis_title="Score F (Frequence)",
+        yaxis_title="Score R (Recence)",
+        xaxis=dict(dtick=1),
+        yaxis=dict(dtick=1, autorange="reversed"),
+        template="plotly_dark",
+    )
+
+    return fig_scatter, fig_bar, fig_hist, fig_heatmap
 
 
 if __name__ == "__main__":
